@@ -81,11 +81,7 @@
 % --- Secção 1: Introdução ---
 \newpage
 \section{Introdução}
-Este documento descreve as opções de implementação, a modelação gramatical, as principais dificuldades encontradas e as instruções de utilização do compilador desenvolvido para a linguagem \textbf{Fortran 77} (standard ANSI X3.9-1978).
-
-O compilador foi inteiramente desenvolvido na linguagem \textbf{Python}, utilizando as ferramentas de suporte \textbf{PLY} (\texttt{ply.lex} e \texttt{ply.yacc}) para as respetivas fases de análise léxica e sintática. O código máquina gerado tem como alvo direto a arquitetura de simulação de pilha da \textbf{Máquina Virtual disponibilizada pelos docentes}, contando adicionalmente com um módulo de otimização estática configurável em tempo de execução.
-
-A arquitetura adotada segue o modelo clássico de compilação sequencial em pipeline: análise léxica $\rightarrow$ análise sintática $\rightarrow$ análise semântica $\rightarrow$ geração de código, com a inclusão de uma fase de otimização híbrida opcional.
+Este projeto consiste na implementação de raiz de um compilador de \textit{Fortran 77} no âmbito das temáticas estudadas em Processamento de Linguagens. O compilador foi inteiramente desenvolvido na linguagem \textit{Python}, utilizando ferramentas de suporte \textit{PLY}. O código máquina gerado pelo programa tem como alvo a Máquina Virtual disponibilizada pela equipa docente. O projeto conta ainda com a fase de valorizações, incluindo otimizações e definição e chamada de subprogramas.
 
 % --- Secção 2: Opções de Implementação ---
 \section{Opções de Implementação}
@@ -93,7 +89,7 @@ A arquitetura adotada segue o modelo clássico de compilação sequencial em pip
 \subsection{Formato do Código Fonte}
 O grupo optou por suportar o \textbf{formato livre (free-form)}, em detrimento do formato de colunas fixas do Fortran 77 original. Esta decisão simplifica a especificação do analisador léxico e aproxima o ambiente de desenvolvimento das práticas modernas de escrita em Fortran, mantendo total compatibilidade com os exemplos do enunciado.
 
-Os comentários são aceites em duas vertentes tradicionais: linhas completas iniciadas pelos caracteres \texttt{C}, \texttt{c} ou \texttt{*} (seguidos obrigatoriamente por um espaço), e comentários inline delimitados pelo caractere \texttt{!}.
+Os comentários são aceites em duas vertentes: linhas completas iniciadas pelos caracteres \texttt{C}, \texttt{c} ou \texttt{*} (seguidos obrigatoriamente por um espaço), e comentários \textit{inline} delimitados pelo caractere \texttt{!}.
 
 \subsection{Estrutura do Projeto}
 \begin{lstlisting}[language=bash, caption=Estrutura de diretórios do projeto]
@@ -104,7 +100,8 @@ src/
     |-- ast_nodes.py       # Definicao dos nos da AST
     |-- semantic.py        # Analise semantica e verificacao de tipos
     |-- bm_codegen.py      # Gerador de codigo para a VM
-    |-- optimizer.py       # Otimizacoes ao nivel do Bytecode (O1/O2)
+    |-- optimizer.py       # Otimizacoes ao nivel do Bytecode (O1)
+    |-- ast_optimizer      # Otimizacao de fluxo (O2)
     |-- builtin_defs.py    # Suporte a funcoes intrinsicas de Fortran
 
 tests/
@@ -114,7 +111,7 @@ tests/
 \end{lstlisting}
 
 \subsection{Análise Léxica (\texttt{lexer.py})}
-O analisador léxico é responsável por processar o fluxo de texto bruto do ficheiro de origem e decompô-lo numa sequência ordenada de \textit{tokens}, descartando os elementos matematicamente nulos (espaços em branco e comentários). Utilizando o \texttt{ply.lex}, mapearam-se as palavras-chave da linguagem e os operadores fundamentais:
+O analisador léxico é responsável por processar o fluxo de texto bruto do ficheiro de origem e decompô-lo numa sequência ordenada de \textit{tokens}, descartando os elementos não necessários (espaços em branco e comentários). Utilizando o \texttt{ply.lex}, mapearam-se as palavras-chave da linguagem e os operadores fundamentais:
 
 \begin{table}[h!]
 \centering
@@ -139,32 +136,44 @@ O \textit{parser} valida se a sequência ordenada de \textit{tokens} respeita a 
     \item \textbf{Statements:} Nós imperativos que executam uma instrução ou alteram o fluxo de controlo do programa, sem produção de valor direto (ex: \texttt{Assignment}, \texttt{IfStmt}, \texttt{DoStmt}).
 \end{itemize}
 
-Devido à semelhança textual entre o acesso a uma posição de um vetor e a invocação de uma função (ambos utilizam a assinatura \texttt{Nome(Argumento)}), o \textit{parser} assume preliminarmente que qualquer chamada indexada é uma \texttt{FunctionCall}. O analisador semântico retifica posteriormente esta tipificação estática com base nas declarações presentes na Tabela de Símbolos.
 
 \subsection{Análise Semântica (\texttt{semantic.py})}
-O analisador semântico efetua a validação lógica e a contextualização do programa antes de o submeter ao \textit{backend} de geração de código. Operando sob o padrão \textit{Visitor}, este componente constrói e gere uma \textbf{Tabela de Símbolos} estruturada por escopos. 
 
-As principais tarefas executadas incluem a validação de declarações (prevenindo o uso de variáveis não declaradas ou declarações duplicadas), a verificação de compatibilidade de tipos em atribuições e operações binárias, e a validação de assinaturas de subprogramas. É também nesta fase que as ambiguidades gramaticais de chamadas indexadas são resolvidas: ao encontrar um nó do tipo \texttt{FunctionCall}, o semântico consulta a tabela e, caso o identificador corresponda a um vetor, reconstrói a estrutura transformando-a num nó \texttt{ArrayAccess} legítimo.
+O analisador semântico realiza a validação lógica do programa antes da geração de código. Este módulo constrói e gere uma Tabela de Símbolos estruturada para validar os diferentes escopos do programa.
 
-\textbf{Normalização dos Loops DO:} Dado que no Fortran 77 os ciclos são delimitados de forma plana por referências numéricas (\textit{labels}) e não por blocos físicos bem definidos, o analisador semântico implementa o método \texttt{\_normalize\_do\_loops}. Esta rotina utiliza uma pilha de controlo estática para agregar de forma recursiva todos os comandos subsequentes e aninhá-los diretamente dentro do corpo estruturado do nó \texttt{DoStmt}, fechando o bloco de forma segura quando deteta o rótulo de terminação correspondente.
+As principais tarefas executadas por este componente são:
+\begin{itemize}
+    \item \textbf{Validação de Declarações:} Garante que todas as variáveis foram declaradas antes de serem usadas e impede a criação de identificadores duplicados no mesmo escopo.
+    \item \textbf{Verificação de Tipos:} Valida a compatibilidade de tipos em atribuições e operações binárias, rejeitando misturas inválidas (como operações aritméticas com \texttt{STRING}).
+    \item \textbf{Validação de Fluxo (\texttt{GOTO}):} Monitoriza os desvios incondicionais, garantindo que todas as diretivas \texttt{GOTO} apontam para rótulos (\textit{labels}) existentes e declarados.
+    \item \textbf{Resolução de Ambiguidades:} Como o \textit{parser} identifica inicialmente qualquer chamada com parênteses como uma \texttt{FunctionCall}, o semântico consulta a Tabela de Símbolos para processar e validar corretamente os casos que correspondem a acessos a vetores.
+\end{itemize}
+
+\textbf{Normalização de Ciclos DO:} Dado que no Fortran 77 os ciclos são delimitados de forma plana por rótulos numéricos, o analisador semântico implementa o método \texttt{\_normalize\_do\_loops}. Esta rotina utiliza uma pilha de controlo interna para processar as instruções sequencialmente, agrupando de forma hierárquica todos os comandos pertencentes ao corpo do ciclo (\texttt{DoStmt}) até encontrar a etiqueta de terminação correspondente.
 
 \subsection{Geração de Código (\texttt{bm\_codegen.py})}
-O gerador de código atua no \textit{backend} do pipeline. Ao percorrer a AST já validada semanticamente, o componente emite as instruções lineares legíveis pela Máquina Virtual de destino. 
+O gerador de código atua no \textit{backend} do compilador, sendo o responsável por percorrer a Árvore de Sintaxe Abstrata (AST) já validada e traduzi-la para a linguagem máquina linear da Máquina Virtual (VM). A sua tarefa principal é converter as estruturas abstratas criadas pelo \textit{parser} (como expressões, atribuições e condições) numa sequência ordenada de instruções baseadas em pilhas, utilizando comandos nativos da VM como \texttt{start}, \texttt{stop}, \texttt{pushi}, \texttt{add}, entre outros.
 
-O gerador calcula antecipadamente o mapeamento de memória (\textit{offsets}) para cada variável detetada nas fases de inicialização. Este processo dita dinamicamente a emissão de instruções globais (\texttt{pushg} e \texttt{storeg}) para o corpo principal ou instruções locais (\texttt{pushl} e \texttt{storel}) para o acesso a variáveis residentes em *stack frames* isolados durante a ativação de subprogramas. Adicionalmente, o gerador monitoriza o tipo das expressões aritméticas: em operações mistas entre inteiros e reais, são injetadas instruções de coerção de tipos (\texttt{itof} ou \texttt{ftoi}) diretamente na pilha antes da execução da instrução aritmética final.
+Para que a execução seja correta, o gerador opera em duas frentes essenciais:
+\begin{itemize}
+    \item \textbf{Separação de Contextos de Memória:} O gerador distingue automaticamente as variáveis que pertencem ao programa principal daquelas que pertencem a funções. Isto dita a emissão dinâmica de instruções globais (\texttt{pushg} e \texttt{storeg}) ou de instruções locais (\texttt{pushl} e \texttt{storel}), garantindo que os dados certos são lidos no espaço de memória correto.
+    \item \textbf{Gestão de Operações Mistas:} Como a Máquina Virtual utiliza instruções aritméticas totalmente separadas para números inteiros (\texttt{add}, \texttt{sub}, \texttt{mul}) e números reais (\texttt{fadd}, \texttt{fsub}, \texttt{fmul}), o gerador monitoriza o tipo de dados dos operandos. Sempre que o código Fortran mistura inteiros com reais numa expressão, o gerador injeta de forma automática operadores de conversão (\texttt{itof} ou \texttt{ftoi}) na pilha antes de emitir a instrução matemática final, prevenindo falhas de execução na VM.
+\end{itemize}
 
 \subsection{Subprogramas (\texttt{FUNCTIONS} e \texttt{SUBROUTINES})}
-O reaproveitamento de código e a modularidade foram integrados através do suporte a funções de utilizador (que devolvem um valor final de tipo explícito) e subrotinas (invocadas explicitamente por intermédio do comando \texttt{CALL}). No analisador sintático, estas estruturas são isoladas em nós específicos designados \texttt{FunctionDef} e \texttt{SubroutineDef}.
+\begin{itemize}
+    \item  \texttt{FUNCTIONS}: computam e devolvem um valor específico.
+ e \texttt{SUBROUTINES}: blocos de ação isolados invocados pelo comando \texttt{CALL}). 
+ \end{itemize}
 
-Para garantir o isolamento estrito de memória e escopo entre subprogramas e o programa principal, a rotina interna \texttt{\_visit\_routine} opera sob um modelo de três fases estruturadas:
+Para evitar conflitos de nomes — como garantir que uma variável \texttt{I} dentro de uma função não altere acidentalmente o valor de uma variável \texttt{I} no programa principal —, o compilador isola completamente os ambientes através de uma **Tabela de Símbolos Local** dedicada a cada rotina. Esta gestão é coordenada pelo método auxiliar \texttt{\_visit\_routine}, que opera em três passos simples:
 \begin{enumerate}
-    \item \textbf{Salvaguarda do Contexto Superior:} No momento em que a execução do compilador interceta a definição de um subprograma, a Tabela de Símbolos global é temporariamente arquivada.
-    \item \textbf{Isolamento do Contexto Local:} O ambiente de análise é reinicializado com uma tabela local exclusiva, onde se registam apenas os parâmetros formais e as variáveis locais declaradas internamente na rotina.
-    \item \textbf{Restauro de Contexto:} Após a validação ou tradução completa do bloco do subprograma, a tabela global anterior é reposta na íntegra, permitindo a continuação segura do fluxo do compilador.
+    \item \textbf{Salvaguarda:} Guarda temporariamente a tabela de símbolos global ativa antes de entrar na rotina.
+    \item \textbf{Isolamento:} Inicializa uma tabela local vazia e exclusiva, registando apenas os parâmetros recebidos e as variáveis declaradas dentro daquela função ou subrotina.
+    \item \textbf{Restauro:} No fim da tradução da rotina, repõe a tabela global antiga para que o programa principal continue o seu fluxo sem interferências.
 \end{enumerate}
 
-Para acomodar a especificação do Fortran 77, que instrui a devolução de valores através da atribuição direta ao nome da própria função, o compilador injeta automaticamente o identificador da função na tabela de símbolos locais com a propriedade \texttt{result: True}. Esta abordagem permitiu reutilizar a lógica padrão de atribuições e instruções de armazenamento em memória (\texttt{storel}) sem necessidade de especializar o motor de geração de código para atribuições de retorno.
-
+Para suportar o retorno de valores através do próprio nome da função (regra do Fortran 77), o compilador insere o nome da função na tabela local com o marcador \texttt{result: True}. Esta abordagem permitiu reutilizar a lógica comum de atribuição (\texttt{Assignment}) e armazenamento (\texttt{storel}).
 % --- Secção de Otimizações ---
 \section{Otimização de Código}
 O módulo de otimização do compilador atua em duas fases distintas: diretamente na Árvore de Sintaxe Abstrata (AST), realizando otimizações de alto nível, e na lista linear de instruções Assembly, aplicando otimizações de baixo nível. O objetivo principal é reduzir o tamanho do ficheiro final e o número de instruções executadas pela Máquina Virtual, mantendo o comportamento original do programa.
@@ -196,28 +205,113 @@ Foram elaborados alguns gráficos ilustrativos das otimizações implementadas, 
     \label{fig:evolucao_otimizacoes}
 \end{figure}
 
-\newpage
+O comportamento dos testes face aos diferentes níveis de otimização, ilustrado na Figura~\ref{fig:evolucao_otimizacoes}, valida a arquitetura modular e incremental do sistema desenvolvido.
+
+O teste \texttt{built\_ins} demonstra um cenário estável: mantém-se invariável entre o nível \texttt{-opt 0} e \texttt{-opt 1} (74 instruções) devido à ausência de constantes puras elegíveis para dobragem. Contudo, o nível \texttt{-opt 2} consegue reduzir o código para 66 instruções. Este ganho deve-se à eliminação de rótulos mortos e saltos redundantes que tinham sido gerados de forma automática pelas rotinas de conversão e pelo cálculo do valor absoluto (\texttt{\_emit\_abs}). O ponto fixo é consolidado no nível \texttt{-opt 3} com 64 instruções, onde o pipeline cíclico remove as redundâncias remanescentes.
+
+Por outro lado, os testes \texttt{algorythm} e \texttt{flow} evidenciam uma flutuação nominal previsível: o volume de instruções no nível \texttt{-opt 2} (81 e 43 linhas, respetivamente) apresenta-se superior ao registado no nível \texttt{-opt 1} (71 e 27 linhas). Este fenómeno justifica-se pelo facto de o nível \texttt{-opt 2} isolar estritamente as otimizações de fluxo de controlo, omitindo por completo a dobragem algébrica de constantes aplicada no nível anterior. Em algoritmos com elevada densidade matemática, o ganho cumulativo de ambas as frentes de otimização só se manifesta na sua totalidade ao atingir o nível máximo de otimização agressiva (\texttt{-opt 3}), fixando os patamares mínimos absolutos de 71 e 20 instruções, respetivamente.
+
+
 % --- Secção 3: Gramática ---
 \section{Gramática Utilizada}
-Abaixo apresenta-se la gramática BNF simplificada suportada pelo compilador:
+Abaixo apresenta-se a gramática BNF simplificada suportada pelo compilador:
 
 \begin{lstlisting}[caption=Gramática BNF do Compilador]
-program     ::= PROGRAM ID declarations_opt statements END function_defs_opt
+program         ::= PROGRAM ID declarations_opt statements END function_defs_opt
 
-type        ::= INTEGER | REAL | LOGICAL
-declarator  ::= ID | ID LPAREN NUMBER RPAREN
+function_defs_opt ::= function_def { function_def | subroutine_def }
+                    | <vazio>
 
-statement   ::= assignment | print_stmt | read_stmt | call_stmt
-              | if_stmt | do_stmt | goto_stmt | label_stmt
-              | continue_stmt | return_stmt
+(* Declaracoes *)
+declarations_opt ::= { declaration }
+                   | <vazio>
 
-if_stmt     ::= IF LPAREN expression RPAREN THEN statements [ELSE statements] ENDIF
+declaration     ::= type declarator_list
 
-do_stmt     ::= DO NUMBER ID EQUALS expression COMMA expression [, expression]
+type            ::= INTEGER | REAL | LOGICAL
 
-expression  ::= expression OP expression | MINUS expression | NOT expression
-              | ID | ID LPAREN expression_list RPAREN | literal
+declarator_list ::= declarator { COMMA declarator }
+
+declarator      ::= ID
+                  | ID LPAREN NUMBER RPAREN
+
+(* Instrucoes *)
+statements      ::= statement { statement }
+
+statement       ::= assignment
+                  | print_stmt
+                  | read_stmt
+                  | call_stmt
+                  | if_stmt
+                  | do_stmt
+                  | goto_stmt
+                  | label_stmt
+                  | continue_stmt
+                  | return_stmt
+
+assignment      ::= varref EQUALS expression
+
+print_stmt      ::= PRINT TIMES COMMA expression_list
+
+read_stmt       ::= READ TIMES COMMA varref_list
+
+varref_list     ::= varref { COMMA varref }
+
+varref          ::= ID
+                  | ID LPAREN expression_list RPAREN
+
+call_stmt       ::= CALL ID LPAREN [ expression_list ] RPAREN
+
+goto_stmt       ::= GOTO NUMBER
+
+label_stmt      ::= NUMBER statement
+
+continue_stmt   ::= CONTINUE
+
+return_stmt     ::= RETURN
+
+(* Estruturas de Controlo *)
+if_stmt         ::= IF LPAREN expression RPAREN THEN
+                        statements
+                    [ ELSE statements ]
+                    ENDIF | END
+
+do_stmt         ::= DO NUMBER ID EQUALS expression COMMA expression
+                  | DO NUMBER ID EQUALS expression COMMA expression COMMA expression
+
+(* Subprogramas *)
+function_def    ::= type FUNCTION ID LPAREN param_list RPAREN
+                        declarations_opt
+                        statements
+                    END
+
+subroutine_def  ::= SUBROUTINE ID LPAREN param_list RPAREN
+                        declarations_opt
+                        statements
+                    END
+
+param_list      ::= declarator_list | <vazio>
+
+(* Expressoes *)
+expression_list ::= expression { COMMA expression }
+
+expression      ::= expression OP expression
+                  | MINUS expression
+                  | NOT expression
+                  | LPAREN expression RPAREN
+                  | ID
+                  | ID LPAREN expression_list RPAREN
+                  | literal
+
+OP              ::= + | - | * | / | **
+                  | .EQ. | .NE. | .LT. | .LE. | .GT. | .GE.
+                  | .AND. | .OR.
+
+literal         ::= NUMBER | STRING | .TRUE. | .FALSE.
 \end{lstlisting}
+\section{Testes}
+Para testar o programa, utilizaram-se os testes fornecidos pela equipa docente, dos quais não obtivemos o output correto no conversor. Apesar da equipa ter tentado, não se conseguiu chegar a uma correção do \textit{output}, porém acreditamos, que se tivéssemos feito uma melhor gestão do tempo, teríamos sucedido. 
+Além dos testes fornecidos, foram sendo adicionados testes complementares de modo a testar certos recursos que achamos serem necessários.
 
 \section{Fluxo de Execução do Compilador}
 O processo de compilação segue um modelo de \textit{pipeline} sequencial, onde cada fase transforma o programa fonte numa representação progressivamente mais próxima da linguagem da Máquina Virtual. O fluxo de dados e a interação entre os módulos desenvolvidos estão sistematizados na Figura~\ref{fig:compiler_flowchart}.
@@ -294,14 +388,14 @@ Onde \texttt{<nivel\_opt>} corresponde a um valor numérico inteiro de 0 a 3.
 
 % --- Secção 7: Dificuldades ---
 \section{Dificuldades de Implementação}
-Durante o desenvolvimento das fases do compilador, o grupo deparou-se com desafios complexos relacionados com as restrições da arquitetura baseada em pilhas da Máquina Virtual de destino. As quatro dificuldades mais críticas foram as seguintes:
 
+Durante o desenvolvimento do compilador, o grupo enfrentou alguns desafios técnicos complexos relacionados com as restrições físicas e estruturais da Máquina Virtual (VM) de destino:
 
 \begin{enumerate}
-    \item \textbf{Sincronização de Escopos no Ciclo DO Global:} O gerador de código foi inicialmente estruturado com as instruções locais \texttt{pushl} e \texttt{storel} para a manipulação dos limites temporários e passos internos de loops. Contudo, quando um ciclo \texttt{DO} era executado no programa principal (escopo global), a ausência de um \textit{frame} de ativação local inicializado na stack fazia com que a VM realizasse leituras inválidas de memória corrompendo as condições do ciclo. O problema foi resolvido adaptando o método \texttt{visit\_DoStmt} para detetar dinamicamente o escopo ativo e comutar de forma segura entre instruções locais ou globais (\texttt{pushg}/\texttt{storeg}).
-    \item \textbf{Alinhamento da Pilha e Desvio de Retorno Oculto:} Durante a invocação de subprogramas, a Máquina Virtual injeta nativamente um elemento nulo invisível (o valor \texttt{0}) no topo da pilha de execução no momento de término da instrução \texttt{RETURN}. Esta particularidade provocava um desalinhamento sistemático na pilha após o retorno da subrotina, corrompendo o mecanismo de *copy-out* responsável pela passagem por referência do Fortran. A solução consistiu na introdução cirúrgica de uma instrução \texttt{pop 1} imediatamente após cada chamada de instrução \texttt{CALL} ou invocação de função no gerador de código.
-    \item \textbf{Coerção Dinâmica de Tipos em Expressões Mistas:} A Máquina Virtual separa estritamente as instruções para inteiros (\texttt{add}, \texttt{mul}) das instruções para reais (\texttt{fadd}, \texttt{fmul}). A tradução de expressões mistas de Fortran exigiu um mapeamento detalhado de tipos na árvore, forçando o gerador a injetar de forma atómica instruções de转换 (\texttt{itof}) e instruções de inversão de operandos (\texttt{swap}) para salvaguardar a ordem das operações na pilha.
-    \item \textbf{Insegurança na Remoção de Cargas Redundantes:} Na fase de otimização em baixo nível, projetou-se a rotina \texttt{remove\_redundant\_loads} para eliminar instruções contíguas do tipo \texttt{STOREL X} / \texttt{PUSHL X}. Todavia, a especificação física da VM dita que a operação de armazenamento consome e retira o valor do topo da pilha no instante da sua chamada. Sem uma análise de grafos de fluxo de dados completa, a eliminação cega revelou-se instável para subprogramas complexos, optando-se por mantê-la desativada para garantir a estabilidade do compilador.
+    \item Ambiguidade entre acesso a array e chamada de função: Em Fortran, A(5) pode ser tanto aceder ao índice 5 de um array como chamar uma função chamada A. O parser não consegue distinguir os dois casos só pela sintaxe, por isso trata ambos como chamada de função. A distinção só é feita mais tarde, no gerador de código, consultando a tabela de símbolos.
+    \item Estrutura dos ciclos DO: O Fortran não delimita os ciclos DO com chavetas nem palavras-chave de fecho — o ciclo termina quando aparece um número de linha específico noutro sítio do código. Isto significa que o parser gera o DoStmt sem body, e foi necessário implementar uma rotina no analisador semântico que percorre a lista de instruções e move as que pertencem ao ciclo para dentro do nó correcto.
+    \item O END fecha múltiplas coisas: A palavra END é usada para terminar o programa principal, funções, subrotinas, e também pode terminar um IF. Isto causou conflitos no parser que tiveram de ser resolvidos com regras específicas — por exemplo, criando uma regra endif que aceita tanto ENDIF como END.
+    
 \end{enumerate}
 
 \section{Conclusão}
