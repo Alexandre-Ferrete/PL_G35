@@ -1,0 +1,16 @@
+PROGRAM TESTEOPTDADO
+INTEGER RESULTADO
+LOGICAL CONDICAO
+
+! 1. Conta matemática complexa puramente constante
+RESULTADO = (10 + 5) * 2 - (20 / 4) ** 2
+
+! 2. Expressão lógica condicional constante
+CONDICAO = (5 .GT. 3) .AND. (10 .NE. 20)
+
+IF (CONDICAO) THEN
+   PRINT *, 'O RESULTADO DA CONTA EXPONENCIAL E: ', RESULTADO
+ELSE
+   PRINT *, 'ISTO NUNCA VAI SER IMPRESSO'
+ENDIF
+END

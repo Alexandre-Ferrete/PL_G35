@@ -1,0 +1,312 @@
+\documentclass[12pt, a4paper]{article}
+
+% --- Pacotes Básicos ---
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[portuguese]{babel}
+\usepackage{geometry}
+\geometry{margin=2.5cm}
+\usepackage{amsmath}
+\usepackage{amsfonts}
+\usepackage{hyperref}
+\usepackage{booktabs}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{tikz}
+
+% --- Configuração de Cores e Código (Listings) ---
+\definecolor{codegray}{rgb}{0.5,0.5,0.5}
+\definecolor{backcolour}{rgb}{0.95,0.95,0.92}
+
+\lstset{
+    backgroundcolor=\color{backcolour},
+    basicstyle=\ttfamily\small,
+    breaklines=true,
+    captionpos=b,
+    keepspaces=true,
+    numbers=left,
+    numberstyle=\tiny\color{codegray},
+    showspaces=false,
+    showstringspaces=false,
+    frame=single
+}
+
+% =========================================================================
+% O DOCUMENTO COMEÇA AQUI
+% =========================================================================
+\begin{document}
+
+% --- Capa do Relatório ---
+\begin{titlepage}
+    \centering
+    \vspace*{1cm}
+    
+    % Instituição e Disciplina
+    {\large \scshape Universidade do Minho} \\
+    \vspace{0.2cm}
+    {\large \textbf{Departamento de Informática}} \\
+    \vspace{0.2cm}
+    {\large UC: Processamento de Linguagens} \\
+    
+    \vspace{3.5cm}
+    
+    % Linha divisória superior
+    \rule{\linewidth}{0.6mm} \\[0.4cm]
+    % Título e Subtítulo
+    {\huge \bfseries Relatório do Trabalho Prático} \\[0.3cm]
+    {\Large \color{gray} Desenvolvimento de um Compilador de Fortran 77} \\[0.4cm]
+    % Linha divisória inferior
+    \rule{\linewidth}{0.6mm} \\
+    
+    \vfill
+    
+    % Secção de Autores organizada
+    {\large \textbf{Autores:}} \\[0.3cm]
+    \begin{tabular}{ll}
+        A107336 & Alexandre Ferrete \\
+        A106872 & Dinis Costa \\
+        A107333 & Lucas Martins \\
+    \end{tabular}
+    
+    \vfill
+    
+    % Data no fundo
+    {\large 17 de Maio de 2026}
+    
+\end{titlepage}
+
+\newpage
+\tableofcontents
+
+% --- Secção 1: Introdução ---
+\newpage
+\section{Introdução}
+Este documento descreve as opções de implementação, a modelação gramatical, as principais dificuldades encontradas e as instruções de utilização do compilador desenvolvido para a linguagem \textbf{Fortran 77} (standard ANSI X3.9-1978).
+
+O compilador foi inteiramente desenvolvido na linguagem \textbf{Python}, utilizando as ferramentas de suporte \textbf{PLY} (\texttt{ply.lex} e \texttt{ply.yacc}) para as respetivas fases de análise léxica e sintática. O código máquina gerado tem como alvo direto a arquitetura de simulação de pilha da \textbf{Máquina Virtual disponibilizada pelos docentes}, contando adicionalmente com um módulo de otimização estática configurável em tempo de execução.
+
+A arquitetura adotada segue o modelo clássico de compilação sequencial em pipeline: análise léxica $\rightarrow$ análise sintática $\rightarrow$ análise semântica $\rightarrow$ geração de código, com a inclusão de uma fase de otimização híbrida opcional.
+
+% --- Secção 2: Opções de Implementação ---
+\section{Opções de Implementação}
+
+\subsection{Formato do Código Fonte}
+O grupo optou por suportar o \textbf{formato livre (free-form)}, em detrimento do formato de colunas fixas do Fortran 77 original. Esta decisão simplifica a especificação do analisador léxico e aproxima o ambiente de desenvolvimento das práticas modernas de escrita em Fortran, mantendo total compatibilidade com os exemplos do enunciado.
+
+Os comentários são aceites em duas vertentes tradicionais: linhas completas iniciadas pelos caracteres \texttt{C}, \texttt{c} ou \texttt{*} (seguidos obrigatoriamente por um espaço), e comentários inline delimitados pelo caractere \texttt{!}.
+
+\subsection{Estrutura do Projeto}
+\begin{lstlisting}[language=bash, caption=Estrutura de diretórios do projeto]
+src/
+    |-- __main__.py        # Ponto de entrada CLI do compilador
+    |-- lexer.py           # Analise lexica (PLY lex)
+    |-- parser.py          # Analise sintatica (PLY yacc)
+    |-- ast_nodes.py       # Definicao dos nos da AST
+    |-- semantic.py        # Analise semantica e verificacao de tipos
+    |-- bm_codegen.py      # Gerador de codigo para a VM
+    |-- optimizer.py       # Otimizacoes ao nivel do Bytecode (O1/O2)
+    |-- builtin_defs.py    # Suporte a funcoes intrinsicas de Fortran
+
+tests/
+    |-- hello.f
+    |-- fatorial.f
+    |-- ...
+\end{lstlisting}
+
+\subsection{Análise Léxica (\texttt{lexer.py})}
+O analisador léxico é responsável por processar o fluxo de texto bruto do ficheiro de origem e decompô-lo numa sequência ordenada de \textit{tokens}, descartando os elementos matematicamente nulos (espaços em branco e comentários). Utilizando o \texttt{ply.lex}, mapearam-se as palavras-chave da linguagem e os operadores fundamentais:
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{@{}lp{10cm}@{}}
+\toprule
+\textbf{Categoria} & \textbf{Exemplos} \\ \midrule
+Palavras-chave & \texttt{PROGRAM, END, INTEGER, REAL, LOGICAL, IF, THEN, ELSE, DO, GOTO, CONTINUE, PRINT, READ, FUNCTION, SUBROUTINE, RETURN, CALL, ENDIF} \\
+Ops. Aritméticos & \texttt{+, -, *, /, **} \\
+Ops. Relacionais & \texttt{.EQ., .NE., .LT., .LE., .GT., .GE.} \\
+Ops. Lógicos & \texttt{.AND., .OR., .NOT.} \\
+Literais Lógicos & \texttt{.TRUE., .FALSE.} \\
+Identificadores & \texttt{[a-zA-Z\_][a-zA-Z0-9\_]*} \\ \bottomrule
+\end{tabular}
+\end{table}
+
+A nível de precedência léxica, os operadores compostos como a potência (\texttt{**}) foram especificados em funções dedicadas no PLY para garantir a sua captura prioritária antes dos operadores simples como a multiplicação (\texttt{*}).
+
+\subsection{Análise Sintática e Árvore de Sintaxe Abstrata (\texttt{parser.py} e \texttt{ast\_nodes.py})}
+O \textit{parser} valida se a sequência ordenada de \textit{tokens} respeita a estrutura gramatical definida para este subconjunto de Fortran 77. Recorrendo ao \texttt{ply.yacc}, foi construído um analisador do tipo LALR(1) que traduz o programa estruturado numa Árvore de Sintaxe Abstrata (AST). Os nós da árvore foram divididos logicamente em duas famílias base:
+\begin{itemize}
+    \item \textbf{Expressions:} Nós computacionais que processam e devolvem um tipo concreto de valor (ex: \texttt{BinOp}, \texttt{UnaryOp}, \texttt{Literal}).
+    \item \textbf{Statements:} Nós imperativos que executam uma instrução ou alteram o fluxo de controlo do programa, sem produção de valor direto (ex: \texttt{Assignment}, \texttt{IfStmt}, \texttt{DoStmt}).
+\end{itemize}
+
+Devido à semelhança textual entre o acesso a uma posição de um vetor e a invocação de uma função (ambos utilizam a assinatura \texttt{Nome(Argumento)}), o \textit{parser} assume preliminarmente que qualquer chamada indexada é uma \texttt{FunctionCall}. O analisador semântico retifica posteriormente esta tipificação estática com base nas declarações presentes na Tabela de Símbolos.
+
+\subsection{Análise Semântica (\texttt{semantic.py})}
+O analisador semântico efetua a validação lógica e a contextualização do programa antes de o submeter ao \textit{backend} de geração de código. Operando sob o padrão \textit{Visitor}, este componente constrói e gere uma \textbf{Tabela de Símbolos} estruturada por escopos. 
+
+As principais tarefas executadas incluem a validação de declarações (prevenindo o uso de variáveis não declaradas ou declarações duplicadas), a verificação de compatibilidade de tipos em atribuições e operações binárias, e a validação de assinaturas de subprogramas. É também nesta fase que as ambiguidades gramaticais de chamadas indexadas são resolvidas: ao encontrar um nó do tipo \texttt{FunctionCall}, o semântico consulta a tabela e, caso o identificador corresponda a um vetor, reconstrói a estrutura transformando-a num nó \texttt{ArrayAccess} legítimo.
+
+\textbf{Normalização dos Loops DO:} Dado que no Fortran 77 os ciclos são delimitados de forma plana por referências numéricas (\textit{labels}) e não por blocos físicos bem definidos, o analisador semântico implementa o método \texttt{\_normalize\_do\_loops}. Esta rotina utiliza uma pilha de controlo estática para agregar de forma recursiva todos os comandos subsequentes e aninhá-los diretamente dentro do corpo estruturado do nó \texttt{DoStmt}, fechando o bloco de forma segura quando deteta o rótulo de terminação correspondente.
+
+\subsection{Geração de Código (\texttt{bm\_codegen.py})}
+O gerador de código atua no \textit{backend} do pipeline. Ao percorrer a AST já validada semanticamente, o componente emite as instruções lineares legíveis pela Máquina Virtual de destino. 
+
+O gerador calcula antecipadamente o mapeamento de memória (\textit{offsets}) para cada variável detetada nas fases de inicialização. Este processo dita dinamicamente a emissão de instruções globais (\texttt{pushg} e \texttt{storeg}) para o corpo principal ou instruções locais (\texttt{pushl} e \texttt{storel}) para o acesso a variáveis residentes em *stack frames* isolados durante a ativação de subprogramas. Adicionalmente, o gerador monitoriza o tipo das expressões aritméticas: em operações mistas entre inteiros e reais, são injetadas instruções de coerção de tipos (\texttt{itof} ou \texttt{ftoi}) diretamente na pilha antes da execução da instrução aritmética final.
+
+\subsection{Subprogramas (\texttt{FUNCTIONS} e \texttt{SUBROUTINES})}
+O reaproveitamento de código e a modularidade foram integrados através do suporte a funções de utilizador (que devolvem um valor final de tipo explícito) e subrotinas (invocadas explicitamente por intermédio do comando \texttt{CALL}). No analisador sintático, estas estruturas são isoladas em nós específicos designados \texttt{FunctionDef} e \texttt{SubroutineDef}.
+
+Para garantir o isolamento estrito de memória e escopo entre subprogramas e o programa principal, a rotina interna \texttt{\_visit\_routine} opera sob um modelo de três fases estruturadas:
+\begin{enumerate}
+    \item \textbf{Salvaguarda do Contexto Superior:} No momento em que a execução do compilador interceta a definição de um subprograma, a Tabela de Símbolos global é temporariamente arquivada.
+    \item \textbf{Isolamento do Contexto Local:} O ambiente de análise é reinicializado com uma tabela local exclusiva, onde se registam apenas os parâmetros formais e as variáveis locais declaradas internamente na rotina.
+    \item \textbf{Restauro de Contexto:} Após a validação ou tradução completa do bloco do subprograma, a tabela global anterior é reposta na íntegra, permitindo a continuação segura do fluxo do compilador.
+\end{enumerate}
+
+Para acomodar a especificação do Fortran 77, que instrui a devolução de valores através da atribuição direta ao nome da própria função, o compilador injeta automaticamente o identificador da função na tabela de símbolos locais com a propriedade \texttt{result: True}. Esta abordagem permitiu reutilizar a lógica padrão de atribuições e instruções de armazenamento em memória (\texttt{storel}) sem necessidade de especializar o motor de geração de código para atribuições de retorno.
+
+% --- Secção de Otimizações ---
+\section{Otimização de Código}
+O módulo de otimização do compilador atua em duas fases distintas: diretamente na Árvore de Sintaxe Abstrata (AST), realizando otimizações de alto nível, e na lista linear de instruções Assembly, aplicando otimizações de baixo nível. O objetivo principal é reduzir o tamanho do ficheiro final e o número de instruções executadas pela Máquina Virtual, mantendo o comportamento original do programa.
+
+A fase da AST é gerida pela classe \texttt{ASTOptimizer}, que resolve operações aritméticas e lógicas entre constantes antes da geração de código. A fase seguinte é executada pela classe \texttt{Optimizer}, transformando e simplificando diretamente as instruções lineares do código máquina.
+
+O sistema está estruturado em quatro níveis incrementais através da flag \texttt{-opt} (Níveis 0 a 3), cujas operações estão resumidas de forma compacta na Tabela~\ref{tab:optimization_levels}.
+
+\begin{table}[h!]
+\centering
+\caption{Níveis de Otimização e Respetivas Transformações}
+\label{tab:optimization_levels}
+\begin{tabular}{clp{8.5cm}}
+\toprule
+\textbf{Nível} & \textbf{Designação} & \textbf{Operações Efetuadas} \\ \midrule
+\texttt{-opt 0} & Sem Otimização & O código gerado é mantido intacto para facilitar a depuração. \\ \midrule
+\texttt{-opt 1} & Otimização Local & Dobragem de constantes (na AST e no Assembly), simplificação de operações neutras por técnicas de janela, remoção de código inalcançável após saltos e eliminação de rótulos mortos. \\ \midrule
+\texttt{-opt 2} & Otimização de Fluxo & Simplificação de desvios condicionais com valores constantes, eliminação de saltos redundantes para a linha seguinte (\textit{fallthrough}) e limpeza de rótulos órfãos. \\ \midrule
+\texttt{-opt 3} & Otimização Agressiva & Execução cíclica e combinada das otimizações anteriores sobre as instruções até que não ocorram mais alterações. \\ \bottomrule
+\end{tabular}
+\end{table}
+
+Foram elaborados alguns gráficos ilustrativos das otimizações implementadas, mostrando assim o impacto das mesmas:
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.85\textwidth]{evolucao_otimizacoes.png}
+    \caption{Impacto dos níveis de otimização no volume de código gerado.}
+    \label{fig:evolucao_otimizacoes}
+\end{figure}
+
+\newpage
+% --- Secção 3: Gramática ---
+\section{Gramática Utilizada}
+Abaixo apresenta-se la gramática BNF simplificada suportada pelo compilador:
+
+\begin{lstlisting}[caption=Gramática BNF do Compilador]
+program     ::= PROGRAM ID declarations_opt statements END function_defs_opt
+
+type        ::= INTEGER | REAL | LOGICAL
+declarator  ::= ID | ID LPAREN NUMBER RPAREN
+
+statement   ::= assignment | print_stmt | read_stmt | call_stmt
+              | if_stmt | do_stmt | goto_stmt | label_stmt
+              | continue_stmt | return_stmt
+
+if_stmt     ::= IF LPAREN expression RPAREN THEN statements [ELSE statements] ENDIF
+
+do_stmt     ::= DO NUMBER ID EQUALS expression COMMA expression [, expression]
+
+expression  ::= expression OP expression | MINUS expression | NOT expression
+              | ID | ID LPAREN expression_list RPAREN | literal
+\end{lstlisting}
+
+\section{Fluxo de Execução do Compilador}
+O processo de compilação segue um modelo de \textit{pipeline} sequencial, onde cada fase transforma o programa fonte numa representação progressivamente mais próxima da linguagem da Máquina Virtual. O fluxo de dados e a interação entre os módulos desenvolvidos estão sistematizados na Figura~\ref{fig:compiler_flowchart}.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+    node distance=1.6cm,
+    every node/.style={fill=white, font=\small},
+    block/.style={draw, rectangle, minimum width=3.5cm, minimum height=0.8cm, rounded corners=2pt, align=center, line width=0.6pt},
+    data/.style={draw, rectangle, dashed, minimum width=3.5cm, minimum height=0.6cm, align=center, fill=gray!5, line width=0.5pt},
+    arrow/.style={-latex, line width=0.6pt},
+    support/.style={draw=blue!30, rectangle, minimum width=3.8cm, minimum height=0.8cm, rounded corners=2pt, align=center, fill=blue!5, line width=0.6pt}
+]
+
+    % Nós do Fluxo Principal
+    \node (src) [data] {Código Fonte\\(\texttt{.f} / \texttt{.f77})};
+    \node (lexer) [block, below of=src] {Análise Léxica\\(\texttt{lexer.py})};
+    \node (tokens) [data, below of=lexer] {Sequência de \textit{Tokens}};
+    \node (parser) [block, below of=tokens] {Análise Sintática\\(\texttt{parser.py})};
+    \node (ast) [data, below of=parser] {Árvore Sintática\\Abstrata (AST)};
+    \node (semantic) [block, below of=ast] {Análise Semântica\\(\texttt{semantic.py})};
+    \node (ast_val) [data, below of=semantic] {AST Validada};
+    
+    % Fase: Otimizador de Alto Nível (AST)
+    \node (astopt) [block, below of=ast_val] {Otimização da AST\\(\texttt{ast\_optimizer.py})};
+    \node (ast_opt_data) [data, below of=astopt] {AST Otimizada};
+    
+    \node (codegen) [block, below of=ast_opt_data] {Geração de Código\\(\texttt{bm\_codegen.py})};
+    \node (asm_raw) [data, below of=codegen] {Assembly Original};
+    \node (optimizer) [block, below of=asm_raw] {Otimizador de Bytecode\\(\texttt{optimizer.py})};
+    \node (asm_opt) [data, below of=optimizer] {Assembly Otimizado\\(\texttt{.asm})};
+
+    % Nós Laterais (Tabelas de Suporte com estilo e espaçamento corrigidos)
+    \node (symtab) [support, right of=semantic, xshift=4.3cm] {Tabela de Símbolos \\ \& Funções};
+    \node (builtins) [support, right of=codegen, xshift=4.3cm] {Definições Intrínsecas\\(\texttt{builtin\_defs.py})};
+
+    % Setas do Fluxo Principal
+    \draw [arrow] (src) -- (lexer);
+    \draw [arrow] (lexer) -- (tokens);
+    \draw [arrow] (tokens) -- (parser);
+    \draw [arrow] (parser) -- (ast);
+    \draw [arrow] (ast) -- (semantic);
+    \draw [arrow] (semantic) -- (ast_val);
+    \draw [arrow] (ast_val) -- (astopt);
+    \draw [arrow] (astopt) -- (ast_opt_data);
+    \draw [arrow] (ast_opt_data) -- (codegen);
+    \draw [arrow] (codegen) -- (asm_raw);
+    \draw [arrow] (asm_raw) -- (optimizer);
+    \draw [arrow] (optimizer) -- (asm_opt);
+
+    % Setas de Interação Lateral (Alinhamento milimétrico pelo corredor central)
+    \draw [arrow, <->] (semantic) -- (symtab);
+    \draw [arrow, ->] (symtab.south) -- ++(-2.3,0) |- ([yshift=0.15cm]codegen.east);
+    \draw [arrow, ->] (builtins.west) -- ([yshift=-0.15cm]codegen.east);
+
+    % Setas de Bypass Opcional (Lado Esquerdo)
+    \draw [arrow, dashed] (ast_val.west) -- ++(-1.5,0) |- node[left, pos=0.25, align=center, font=\footnotesize] {Sem\\otimização} (codegen.west);
+    \draw [arrow, dashed] (asm_raw.west) -- ++(-1.5,0) |- node[left, pos=0.25, align=center, font=\footnotesize] {Sem\\otimização} (asm_opt.west);
+
+\end{tikzpicture}
+\caption{Fluxo de dados e arquitetura modular do compilador com dupla fase de otimização opcional.}
+\label{fig:compiler_flowchart}
+\end{figure}
+
+\newpage
+\section{Compilação e Utilização}
+Para compilar um ficheiro Fortran utilizando a interface de linha de comandos desenvolvida, utilize o seguinte formato de comando no terminal:
+\begin{lstlisting}[language=bash]
+python src/__main__.py main <ficheiro.f> <nivel_opt> <saida.asm>
+\end{lstlisting}
+
+Onde \texttt{<nivel\_opt>} corresponde a um valor numérico inteiro de 0 a 3.
+
+% --- Secção 7: Dificuldades ---
+\section{Dificuldades de Implementação}
+Durante o desenvolvimento das fases do compilador, o grupo deparou-se com desafios complexos relacionados com as restrições da arquitetura baseada em pilhas da Máquina Virtual de destino. As quatro dificuldades mais críticas foram as seguintes:
+
+
+\begin{enumerate}
+    \item \textbf{Sincronização de Escopos no Ciclo DO Global:} O gerador de código foi inicialmente estruturado com as instruções locais \texttt{pushl} e \texttt{storel} para a manipulação dos limites temporários e passos internos de loops. Contudo, quando um ciclo \texttt{DO} era executado no programa principal (escopo global), a ausência de um \textit{frame} de ativação local inicializado na stack fazia com que a VM realizasse leituras inválidas de memória corrompendo as condições do ciclo. O problema foi resolvido adaptando o método \texttt{visit\_DoStmt} para detetar dinamicamente o escopo ativo e comutar de forma segura entre instruções locais ou globais (\texttt{pushg}/\texttt{storeg}).
+    \item \textbf{Alinhamento da Pilha e Desvio de Retorno Oculto:} Durante a invocação de subprogramas, a Máquina Virtual injeta nativamente um elemento nulo invisível (o valor \texttt{0}) no topo da pilha de execução no momento de término da instrução \texttt{RETURN}. Esta particularidade provocava um desalinhamento sistemático na pilha após o retorno da subrotina, corrompendo o mecanismo de *copy-out* responsável pela passagem por referência do Fortran. A solução consistiu na introdução cirúrgica de uma instrução \texttt{pop 1} imediatamente após cada chamada de instrução \texttt{CALL} ou invocação de função no gerador de código.
+    \item \textbf{Coerção Dinâmica de Tipos em Expressões Mistas:} A Máquina Virtual separa estritamente as instruções para inteiros (\texttt{add}, \texttt{mul}) das instruções para reais (\texttt{fadd}, \texttt{fmul}). A tradução de expressões mistas de Fortran exigiu um mapeamento detalhado de tipos na árvore, forçando o gerador a injetar de forma atómica instruções de转换 (\texttt{itof}) e instruções de inversão de operandos (\texttt{swap}) para salvaguardar a ordem das operações na pilha.
+    \item \textbf{Insegurança na Remoção de Cargas Redundantes:} Na fase de otimização em baixo nível, projetou-se a rotina \texttt{remove\_redundant\_loads} para eliminar instruções contíguas do tipo \texttt{STOREL X} / \texttt{PUSHL X}. Todavia, a especificação física da VM dita que a operação de armazenamento consome e retira o valor do topo da pilha no instante da sua chamada. Sem uma análise de grafos de fluxo de dados completa, a eliminação cega revelou-se instável para subprogramas complexos, optando-se por mantê-la desativada para garantir a estabilidade do compilador.
+\end{enumerate}
+
+\section{Conclusão}
+O desenvolvimento deste projeto permitiu consolidar na vertente prática os conceitos fundamentais de engenharia de linguagens, traduzidos na implementação bem-sucedida de um pipeline completo de compilação para um subset expressivo da linguagem Fortran 77. 
+
+A resolução de problemas clássicos, tais como o desdobramento e normalização de laços de controlo não delimitados e o tratamento de assinaturas de chamadas ambíguas entre vetores e funções, forneceu um entendimento aprofundado acerca da abstração fornecida por linguagens de alto nível. Por fim, o desenvolvimento do sistema integrado de dupla fase de otimização provou o impacto direto da análise estática de código na economia de recursos de memória e na eficiência de processamento no ambiente da Máquina Virtual de destino.
+
+\end{document}
